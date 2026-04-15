@@ -16,8 +16,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # =======================
 # --- SUPABASE BRIDGE CONFIG ---
 # Paste your keys from the Supabase Dashboard here
-SUPABASE_URL = "https://your-project-id.supabase.co"
-SUPABASE_KEY = "your-anon-key"
+SUPABASE_URL = "https://aetkwxgawqwdkalszpvz.supabase.co"
+SUPABASE_KEY = "sb_publishable_1YwAsOGUppsbho7eohAlag_7D43E425"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 CURRENT_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
