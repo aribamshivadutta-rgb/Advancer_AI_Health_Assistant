@@ -4,12 +4,13 @@ import pandas as pd
 import joblib
 import re
 import difflib
+import time
 import requests
 import warnings
 from bs4 import BeautifulSoup
 from supabase import create_client, Client
 
-# Suppress warnings for a cleaner UI
+# Suppress the feature name warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # =======================
@@ -23,15 +24,19 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 CURRENT_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_SCRIPT_DIR)
 
-# Paths for AI Models and Data
+# Model and Data Paths
 MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
 DATA_DIR = os.path.join(PROJECT_ROOT, "data", "clean", "disease_and_symptom_clean")
-BIO_MODEL_PATH = os.path.join(MODEL_DIR, "mobile_health_model.pkl")  # Vitals Model
-MODEL_PATH = os.path.join(MODEL_DIR, "lgbm_model_clean.pkl")  # Symptom Model
+
+BIO_MODEL_PATH = os.path.join(MODEL_DIR, "mobile_health_model.pkl")
+MODEL_PATH = os.path.join(MODEL_DIR, "lgbm_model_clean.pkl")
 LE_PATH = os.path.join(DATA_DIR, "label_encoder.pkl")
 FEAT_PATH = os.path.join(DATA_DIR, "X_preprocessed.csv")
 FULL_DATA_PATH = os.path.join(DATA_DIR, "preprocessed_data.csv")
-INFO_DB_PATH = os.path.join(CURRENT_SCRIPT_DIR, "app_data", "who_data_clean.csv")
+
+APP_DATA_DIR = os.path.join(CURRENT_SCRIPT_DIR, "app_data")
+INFO_DB_PATH = os.path.join(APP_DATA_DIR, "who_data_clean.csv")
+os.makedirs(APP_DATA_DIR, exist_ok=True)
 
 DISEASE_ALIASES = {
     "common cold": "upper respiratory infection", "cold": "upper respiratory infection",
@@ -40,17 +45,16 @@ DISEASE_ALIASES = {
 
 
 # ==========================================
-# 2. LIVE VITAL MONITOR (NEW BRIDGE)
+# 2. UPDATED BRIDGE LOGIC (Cloud Ingestion)
 # ==========================================
 @st.fragment(run_every=3)
-def render_biometric_sidebar():
-    """Sidebar component that polls Supabase every 3 seconds"""
-    st.sidebar.title("📱 Live Vital Monitor")
-    status_placeholder = st.sidebar.empty()
+def render_biometric_content():
+    """Fetches real-time pulse from the Supabase Bridge"""
+    status_placeholder = st.empty()
 
     if os.path.exists(BIO_MODEL_PATH):
         try:
-            # Fetch latest data from Android app via Supabase
+            # 1. Fetch latest record from the Supabase Bridge
             response = supabase.table("vitals").select("*").order("created_at", desc=True).limit(1).execute()
 
             if response.data:
@@ -58,32 +62,32 @@ def render_biometric_sidebar():
                 hr = latest['heart_rate']
                 lux = latest['light_level']
 
-                # Use the Mobile Health Model to predict risk
+                # 2. Load Biometric Model
                 bio_model = joblib.load(BIO_MODEL_PATH)
+
+                # 3. Predict Risk
                 input_df = pd.DataFrame([[hr, lux]], columns=['HeartRate_Clean', 'Light_Clean'])
                 prediction = bio_model.predict(input_df)[0]
 
+                # 4. Display UI
                 status_icon = "🚨" if prediction == 1 else "✅"
                 status_text = "RISK DETECTED" if prediction == 1 else "STABLE"
-                color = "red" if prediction == 1 else "green"
 
                 status_placeholder.markdown(
-                    f"<div style='padding:15px; border-radius:10px; border:2px solid {color};'>"
-                    f"<h3>{status_icon} {status_text}</h3>"
-                    f"<b>Heart Rate:</b> {hr} BPM<br>"
-                    f"<b>Light Level:</b> {lux} Lux"
-                    f"</div>", unsafe_allow_html=True
+                    f"### {status_icon} {status_text}\n"
+                    f"**HR:** {hr} BPM | **Lux:** {lux}\n"
+                    f"---"
                 )
             else:
                 status_placeholder.info("Waiting for phone data...")
-        except Exception as e:
-            status_placeholder.error(f"Cloud Sync Error")
+        except Exception:
+            status_placeholder.warning("Syncing Cloud Bridge...")
     else:
-        status_placeholder.warning("Vitals Model (mobile_health_model.pkl) not found.")
+        status_placeholder.info("Model missing. Connect phone.")
 
 
 # ==========================================
-# 3. ADVANCED MEDICAL AI CLASS (MERGED)
+# 3. MEDICAL AI CLASS
 # ==========================================
 class MedicalAI:
     def __init__(self):
@@ -104,7 +108,7 @@ class MedicalAI:
                 if os.path.exists(FULL_DATA_PATH):
                     self.df_full = pd.read_csv(FULL_DATA_PATH)
             except Exception as e:
-                st.error(f"Resource Loading Error: {e}")
+                st.error(f"Error loading AI: {e}")
 
     def get_symptoms(self, disease_name):
         if self.df_full is None: return []
@@ -114,23 +118,16 @@ class MedicalAI:
         return [col.replace("_", " ") for col in self.known_symptoms if col in row and row[col] == 1]
 
     def get_advice(self, disease_name):
-        """Combines local CSV lookup, WHO scraping, and Wikipedia scraping"""
         clean_name = disease_name.lower().strip()
-
-        # 1. Try local cache
+        # Local Cache Check
         if os.path.exists(INFO_DB_PATH):
             df = pd.read_csv(INFO_DB_PATH)
             match = df[df['Disease'].str.lower() == clean_name]
             if not match.empty:
                 row = match.iloc[0]
-                return [row[f"Precaution_{i}"] for i in range(1, 6) if
-                        pd.notna(row.get(f"Precaution_{i}"))], "Local Cache"
-
-        # 2. Try Scraping (WHO/Wiki)
-        found_text = []
-        # [Scraping logic remains exactly same as your old code...]
-        # (Shortened for space, but keep your scrape_wikipedia and WHO logic here)
-        return found_text, "Web Search"
+                tips = [row[f"Precaution_{i}"] for i in range(1, 6) if pd.notna(row.get(f"Precaution_{i}"))]
+                return tips, "Local Database"
+        return ["Consult a professional for specific advice."], "General"
 
     def predict(self, user_input):
         cleaned = re.sub(r'\b(and|or|I have|feeling|my|is)\b', '', user_input, flags=re.IGNORECASE)
@@ -154,50 +151,49 @@ class MedicalAI:
 # 4. MAIN UI EXECUTION
 # ==========================================
 def main():
-    st.set_page_config(page_title="Advanced AI Health 2.0", page_icon="🏥", layout="wide")
+    st.set_page_config(page_title="Advanced AI Health", page_icon="🏥", layout="wide")
 
-    # 1. Sidebar (Live Data)
-    render_biometric_sidebar()
+    # --- SIDEBAR (Context for the Fragment) ---
+    with st.sidebar:
+        st.title("📱 Live Vital Monitor")
+        render_biometric_content()
 
-    # 2. Main Chat UI
     st.title("🏥 AI Health Assistant 2.0")
-    st.caption("Cloud-Synced Vital Monitoring + Deep Symptom Analysis")
+    st.caption("Monitoring Vitals + Symptom Analysis")
 
     if 'bot' not in st.session_state:
         st.session_state.bot = MedicalAI()
 
     if "messages" not in st.session_state:
-        st.session_state.messages = [{"role": "assistant", "content": "How can I help you with your symptoms today?"}]
+        st.session_state.messages = [
+            {"role": "assistant", "content": "Vitals are syncing in the sidebar. How can I help you?"}]
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Enter symptoms..."):
+    if prompt := st.chat_input("Type symptoms..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
         bot = st.session_state.bot
-        query_lower = prompt.lower().strip()
-
-        with st.spinner("Consulting AI Database..."):
-            disease, matched, conf = bot.predict(query_lower)
+        with st.spinner("Analyzing..."):
+            disease, matched, conf = bot.predict(prompt.lower())
 
             if disease:
                 symptoms = bot.get_symptoms(disease)
-                advice, source = bot.get_advice(disease)
-
-                response = f"✅ **Analysis:** I suspect **{disease.upper()}** ({conf:.1f}% confidence).\n\n"
-                response += f"**🩺 Common Symptoms:** {', '.join(symptoms[:6])}\n\n"
-                response += f"**🛡️ Medical Advice ({source}):**\n"
-                for item in advice[:3]: response += f"- {item}\n"
+                advice, src = bot.get_advice(disease)
+                response = f"**Assessment:** Potential case of **{disease.upper()}** ({conf:.1f}% match).\n\n"
+                response += f"**Symptoms Found:** {', '.join(matched).replace('_', ' ')}\n\n"
+                response += f"**Typical Profile:** {', '.join(symptoms[:5])}\n\n"
+                response += f"**Advice ({src}):**\n"
+                for tip in advice: response += f"- {tip}\n"
             else:
-                response = "I couldn't match those symptoms. Please try describing them differently."
+                response = "I couldn't detect specific symptoms. Could you please clarify?"
 
         st.session_state.messages.append({"role": "assistant", "content": response})
-        with st.chat_message("assistant"):
-            st.markdown(response)
+        st.rerun()
 
 
 if __name__ == "__main__":
