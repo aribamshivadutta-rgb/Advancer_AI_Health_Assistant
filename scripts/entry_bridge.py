@@ -15,8 +15,8 @@ if not os.path.exists(STAGING_DIR):
 
 # --- SUPABASE CONFIG ---
 # PASTE YOUR ACTUAL KEYS HERE FROM SETTINGS -> API
-SUPABASE_URL = "https://your-project-id.supabase.co"
-SUPABASE_KEY = "your-anon-key"
+SUPABASE_URL = "https://aetkwxgawqwdkalszpvz.supabase.co"
+SUPABASE_KEY = "sb_publishable_1YwAsOGUppsbho7eohAlag_7D43E425"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
